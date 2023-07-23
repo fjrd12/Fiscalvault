@@ -29,6 +29,8 @@ class FiscalEntity:
     def get_all_fiscal_entities(self):
         return self._repository.get_all()
 
+    def get_all_fiscal_entities_keys(self, rfc):
+        return self._repository.get_all_fiscal_keys(rfc)
     def get_fiscal_entity_by_id(self, rfc):
         record = self._repository.get_by_id(rfc, self.log)
 
@@ -43,6 +45,7 @@ class FiscalEntity:
             self.attributes['ChangeT'] = record[7]
             self.attributes['UsrCreation'] = record[8]
             self.attributes['UsrChange'] = record[9]
+        self.attributes['keys'] = self.get_all_fiscal_entities_keys(self.attributes['rfc'])
         return record
 
     def create_fiscal_entity(self, rfc, nombre, curp, nombres, apellido, nombrecomercial, systemuser):
@@ -85,16 +88,41 @@ class FiscalEntity:
 
     def create_fiscal_key(self, keytype, psw, raw):
         now = datetime.datetime.now()
+
         fiscal_key = {
-                         'rfc': self.attributes('rfc'),
+                         'rfc': self.attributes['rfc'],
                          'keyType': keytype,
                          'Raw': raw,
                          'keysecret': psw
                           }
-        result = self._repository.create_key(self.attributes['rfc'], fiscal_key, self.log)
-        if type(result) is dict:
-            self.log.debug('The key {} can be created'.format(self.attributes['rfc']))
+        if len(fiscal_key['Raw']) == 0:
+            fiscal_key['Raw'] = "''"
+        result = self._repository.create_key(fiscal_key['rfc'], fiscal_key['keyType'], fiscal_key['keysecret'], fiscal_key['Raw'], self.log)
+        if type(result) is tuple:
+            self.log.debug('The key {},{} can be created'.format(fiscal_key['rfc'], fiscal_key['keyType']))
         else:
             self.keys.append(fiscal_key)
-            self.log.error('The key {} cannot be created'.format(self.attributes['rfc']))
+            self.log.error('The key {},{} cannot be created'.format(fiscal_key['rfc'], fiscal_key['keyType']))
         return result
+
+    def update_fiscal_key(self, keytype, psw, raw):
+        now = datetime.datetime.now()
+
+        fiscal_key = {
+                         'rfc': self.attributes['rfc'],
+                         'keyType': keytype,
+                         'Raw': raw,
+                         'keysecret': psw
+                          }
+        if len(fiscal_key['Raw']) == 0:
+            fiscal_key['Raw'] = "''"
+        result = self._repository.update_fiscal_key(fiscal_key['rfc'], fiscal_key['keyType'], fiscal_key['keysecret'], fiscal_key['Raw'], self.log)
+        if type(result) is tuple:
+            self.log.debug('The key {},{} can be updated'.format(fiscal_key['rfc'], fiscal_key['keyType']))
+        else:
+            self.keys.append(fiscal_key)
+            self.log.error('The key {},{} cannot be updated'.format(fiscal_key['rfc'], fiscal_key['keyType']))
+        return result
+
+    def read_all_fiscal_keys(self):
+        return self._repository.get_all_fiscal_keys(self.attributes['rfc'])
