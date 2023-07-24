@@ -1,6 +1,7 @@
-import datetime
+
 import logging
 from abc import ABC, abstractmethod
+
 import mysql.connector
 class IRepository(ABC):
     @abstractmethod
@@ -18,6 +19,13 @@ class IRepository(ABC):
     @abstractmethod
     def create_key(self, item):
         raise NotImplementedError
+    @abstractmethod
+    def create_req(self, item):
+        raise NotImplementedError
+    @abstractmethod
+    def create_req_extr(self, item):
+        raise NotImplementedError
+
 
     @abstractmethod
     def update(self, item):
@@ -53,7 +61,28 @@ class MySQLRepositoryfiscalentity(IRepository):
         cursor = self._connection.cursor()
         cursor.execute("SELECT * FROM fiscalvault.FiscalEntityKeys where fkrfc = '{}'".format(rfc))
         results = cursor.fetchall()
-        print(results)
+        return results
+
+    def get_all_fiscal_extractions(self,rfc):
+        # query all records from database
+        cursor = self._connection.cursor()
+        cursor.execute(
+            """SELECT `meta`.`idFiscalDigitalExtraction` as id,
+                       `meta`.`RFC`,
+                       `meta`.`Type`,
+                       `meta`.`ExtrMode`,
+                       `meta`.`Month`,
+                       `meta`.`FiscalYear`,
+                       `extdet`.IdSolicitud,
+                       `extdet`.FechaIni,
+                       `extdet`.Fechafin,
+                       `extdet`.Status
+                FROM `fiscalvault`.`FiscalDigitalExtMeta` as meta
+                inner join fiscalvault.FiscalDigitalExtraction as extdet on
+                      meta.idFiscalDigitalExtraction = extdet.idFiscalDigitalExtraction and
+                      meta.RFC = extdet.RFC
+                where meta.rfc = '{}'""".format(rfc))
+        results = cursor.fetchall()
         return results
     def get_by_id(self, rfc, log):
         # query record by id from database
@@ -82,13 +111,13 @@ class MySQLRepositoryfiscalentity(IRepository):
             return 0
         return FiscalEntity
 
-    def create_key(self, rfc, keytype, passw, raw, log):
+    def create_key(self, rfc, keytype, passw, raw, scndkey, log):
         # insert record into database
         cursor = self._connection.cursor()
         record = self.get_by_id(rfc, log)
         if record:
-            sentence = "INSERT INTO fiscalvault.FiscalEntityKeys(fkrfc, keyType, Raw, Keysecret) VALUES (%s,%s,%s,MD5(%s))"
-            insert_blob_tuple = (rfc, keytype, raw, passw)
+            insert_blob_tuple = (rfc, keytype, raw, passw, scndkey)
+            sentence = "INSERT INTO fiscalvault.FiscalEntityKeys(fkrfc, keyType, Raw, Keysecret, 2ndkey) VALUES (%s,%s,%s,%s,%s)"
             try:
                 cursor.execute(sentence, insert_blob_tuple)
                 self._connection.commit()
@@ -99,12 +128,47 @@ class MySQLRepositoryfiscalentity(IRepository):
             return 0
         return insert_blob_tuple
 
-    def update_fiscal_key(self, rfc, keytype, passw, raw, log):
-        # update record in database
-        update_blob_tuple = (raw, passw, rfc, keytype)
-        print(update_blob_tuple)
+    def create_req(self, rfc, type, extrmode, month, fiscalyear, log):
+        # insert record into database
         cursor = self._connection.cursor()
-        sentence = "UPDATE fiscalvault.FiscalEntityKeys SET Raw=%s, keysecret=MD5(%s) where fkRFC = %s and keyType=%s"
+        record = self.get_by_id(rfc, log)
+        insert_tuple = (rfc, type, extrmode, month, fiscalyear)
+        if record:
+            sentence = "INSERT INTO fiscalvault.FiscalDigitalExtMeta(RFC, Type, ExtrMode, Month, FiscalYear) VALUES (%s,%s,%s,%s,%s)"
+            try:
+                record = cursor.execute(sentence, insert_tuple)
+                self._connection.commit()
+                id = cursor.lastrowid
+                insert_tuple = (id, rfc, type, extrmode, month, fiscalyear)
+            except Exception as e:
+                log.error(e)
+        else:
+            log.error('The record {} does not exists'.rfc)
+            return 0
+        return insert_tuple
+
+    def create_req_extr(self, id, rfc, idsol, fechaIni, fechaFin, status, creation, log):
+        # insert record into database
+        cursor = self._connection.cursor()
+        record = self.get_by_id(rfc, log)
+        insert_tuple = (id, rfc, idsol, fechaIni, fechaFin, status, creation)
+        if record:
+            sentence = "INSERT INTO fiscalvault.FiscalDigitalExtraction(idFiscalDigitalExtraction, RFC, IdSolicitud, FechaIni, Fechafin, Status, Creation) VALUES (%s,%s,%s,%s,%s,%s,%s)"
+            try:
+                record = cursor.execute(sentence, insert_tuple)
+                self._connection.commit()
+            except Exception as e:
+                log.error(e)
+        else:
+            log.error('The record {} does not exists'.rfc)
+            return 0
+        return insert_tuple
+
+    def update_fiscal_key(self, rfc, keytype, passw, raw, scndkey, log):
+        # update record in database
+        update_blob_tuple = (raw, passw, scndkey, rfc, keytype)
+        cursor = self._connection.cursor()
+        sentence = "UPDATE fiscalvault.FiscalEntityKeys SET Raw=%s, keysecret=%s, 2ndkey=%s where fkRFC = %s and keyType=%s"
         try:
             cursor.execute(sentence, update_blob_tuple)
             self._connection.commit()
@@ -140,3 +204,5 @@ class MySQLRepositoryfiscalentity(IRepository):
         if cursor.rowcount < 0:
             log.error('No records match with the criteria {}'.format(rfc))
         return cursor.rowcount > 0
+
+

@@ -1,6 +1,5 @@
 from FiscalEntity.FiscalEntity import FiscalEntity
 from FiscalEntity.FiscalEntityRep import MySQLRepositoryfiscalentity
-import datetime
 
 host = '127.0.0.1'
 db = 'fiscalvault'
@@ -18,6 +17,14 @@ if __name__ == '__main__':
     # fiscal_entity.update_item('RODF8012119N3', 'Francisco Jhonathan Rodriguez Diaz', 'RODF801211HNEDZR09', 'Francisco Jhonathan','Rodriguez D', 'NA', 'NA')
     # fiscal_entityr = fiscal_entity.get_fiscal_entity_by_id('RODF8012119N3')
     fiscal_entityr = fiscal_entity.get_fiscal_entity_by_id('RODF8012119N3')
+    fiscal_entity.download_pending_requests('/home/francisco/PycharmProjects/Fiscalvault/workspace')
+    # fiscal_entity.create_fiscal_key('PSW', 'jasdason2457', '')
+    # fiscal_entity.req_month_digital_docs('M', 2023, 1)
+    # fiscal_entity.req_month_digital_docs('M', 2023, 2)
+    # fiscal_entity.req_month_digital_docs('M', 2023, 3)
+    # fiscal_entity.req_month_digital_docs('M', 2023, 4)
+    # fiscal_entity.req_month_digital_docs('M', 2023, 5)
+    # fiscal_entity.req_month_digital_docs('M', 2023, 6)
     # fiscal_entity.create_fiscal_key('PSW', 'lmnopq', '')
     #
     # # Convert digital data to binary format
