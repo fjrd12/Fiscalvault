@@ -1,7 +1,12 @@
+import zipfile
 import base64
 import calendar
 import logging
 import os
+import json
+from lxml import etree, objectify
+import xmltodict
+
 from datetime import datetime
 from cfdiclient import (Autenticacion, DescargaMasiva, Fiel, SolicitaDescarga,
                         VerificaSolicitudDescarga)
@@ -9,7 +14,7 @@ from cryptography.fernet import Fernet
 
 
 class FiscalEntity:
-    def __init__(self, repository):
+    def __init__(self, repository, digitaldocument):
         """This method will be used to create the entity FiscalEntity, and it's abstraction
         :repositoryIrepository: Will have the repository abstraction
         :returns: The object created
@@ -32,6 +37,7 @@ class FiscalEntity:
         self.cleared = self.attributes
         logging.basicConfig(level=logging.DEBUG)
         self.log = logging.getLogger(__name__)
+        self.digitaldocument = digitaldocument
 
     def get_all_fiscal_entities(self):
         return self._repository.get_all()
@@ -41,6 +47,12 @@ class FiscalEntity:
 
     def get_all_fiscal_extractions(self, rfc):
         return self._repository.get_all_fiscal_extractions(rfc)
+
+    def get_all_uuid_by_idsolicitud(self,idSolicitud):
+        return self._repository.get_all_uuid_by_idsolicitud(idSolicitud)
+    def read_all_fiscal_keys(self):
+        return self._repository.get_all_fiscal_keys(self.attributes['rfc'])
+
     def get_fiscal_entity_by_id(self, rfc):
         record = self._repository.get_by_id(rfc, self.log)
 
@@ -90,6 +102,11 @@ class FiscalEntity:
         result = self._repository.update(fiscal_dict, self.log)
         if result is not None:
             self.attributes = fiscal_entity
+        return result
+
+    def update_uuid(self, uuid, docrelated):
+        fiscal_dict = {'docrelated': docrelated, 'uuid': uuid}
+        result = self._repository.update_uuid(fiscal_dict, self.log)
         return result
 
     def delete_item(self, rfc):
@@ -148,6 +165,33 @@ class FiscalEntity:
                                                                             fiscal_key['FiscalYear']))
         return result
 
+    def create_req_extr_uuid(self, id_extr, idsol, uuid):
+
+        fiscal_key = {
+            'idFiscalDigitalExtraction': id_extr,
+            'RFC': self.attributes['rfc'],
+            'IdSolicitud': idsol,
+            'UUID': uuid
+        }
+
+        result = self._repository.create_req_extr_uuid(fiscal_key['idFiscalDigitalExtraction'], fiscal_key['RFC'],
+                                                       fiscal_key['IdSolicitud'], fiscal_key['UUID'], self.log)
+        if type(result) is tuple:
+            self.log.debug(
+                'The extraction request UUID {},{},{},{} can be created'.format(
+                                                                           fiscal_key['idFiscalDigitalExtraction'],
+                                                                           fiscal_key['RFC'],
+                                                                           fiscal_key['IdSolicitud'],
+                                                                           fiscal_key['UUID']))
+        else:
+            self.log.debug(
+                'The extraction request UUID {},{},{},{} cannot be created'.format(
+                                                                           fiscal_key['idFiscalDigitalExtraction'],
+                                                                           fiscal_key['RFC'],
+                                                                           fiscal_key['IdSolicitud'],
+                                                                           fiscal_key['UUID']))
+        return result
+
     def create_req_ext(self, id_extr, idsol, fecha_ini, fecha_fin, status, creation):
 
         fiscal_key = {
@@ -160,13 +204,15 @@ class FiscalEntity:
             'Creation': creation
         }
 
-        result = self._repository.create_req_extr(fiscal_key['idFiscalDigitalExtraction'], fiscal_key['RFC'], fiscal_key['IdSolicitud'],
-                                              fiscal_key['FechaIni'], fiscal_key['FechaFin'], fiscal_key['Status'], fiscal_key['Creation'], self.log)
+        result = self._repository.create_req_extr(fiscal_key['idFiscalDigitalExtraction'], fiscal_key['RFC'],
+                                                  fiscal_key['IdSolicitud'],
+                                                  fiscal_key['FechaIni'], fiscal_key['FechaFin'], fiscal_key['Status'],
+                                                  fiscal_key['Creation'], self.log)
         if type(result) is tuple:
             self.log.debug(
                 'The extraction request {},{},{},{} can be created'.format(fiscal_key['RFC'], fiscal_key['IdSolicitud'],
-                                                                            fiscal_key['FechaIni'],
-                                                                            fiscal_key['FechaFin']))
+                                                                           fiscal_key['FechaIni'],
+                                                                           fiscal_key['FechaFin']))
         else:
             self.log.debug(
                 'The extraction request {},{},{},{} can be created'.format(fiscal_key['RFC'], fiscal_key['IdSolicitud'],
@@ -199,8 +245,13 @@ class FiscalEntity:
             self.log.error('The key {},{} cannot be updated'.format(fiscal_key['rfc'], fiscal_key['keyType']))
         return result
 
-    def read_all_fiscal_keys(self):
-        return self._repository.get_all_fiscal_keys(self.attributes['rfc'])
+    def update_status_extraction(self, item, status):
+        result = self._repository.update_status_extraction(item[0], item[1], item[6], status, self.log)
+        if result:
+            self.log.debug('The job status {},{},{} can be updated'.format(item[0], item[1], item[6]))
+        else:
+            self.log.error('The key {},{},{} cannot be updated'.format(item[0], item[1], item[6]))
+        return result
 
     def req_month_digital_docs(self, extraction_basis, FiscalYear, Month):
 
@@ -213,7 +264,6 @@ class FiscalEntity:
                     cer_der = item[2]
                 case 'KEY':
                     key_der = item[2]
-
         match extraction_basis:
             case 'D':
                 a = 1
@@ -230,42 +280,46 @@ class FiscalEntity:
                 descarga = SolicitaDescarga(fiel)
                 first_dt = datetime(FiscalYear, Month, 1)
                 res = calendar.monthrange(first_dt.year, first_dt.month)
-                end_date = datetime(FiscalYear, Month, res[1], int(current_time[0:1]), int(current_time[2:3]),
-                                    int(current_time[3:4]))
+                # end_date = datetime(FiscalYear, Month, res[1], int(current_time[0:1]), int(current_time[2:3]),
+                #                     int(current_time[3:4]))
+                end_date = datetime(FiscalYear, Month, res[1], 23, 59, 56)
                 fecha_inicial = first_dt.date()
                 fecha_final = end_date
                 current_time = now.strftime("%H:%M:%S")
 
                 extr_metar = self.create_req(self.attributes['rfc'], 'R', extraction_basis, Month, FiscalYear)
                 if type(extr_metar) is tuple:
-                    sol_recibidos = descarga.solicitar_descarga(token, self.attributes['rfc'], fecha_inicial, fecha_final,
-                                                                rfc_receptor=self.attributes['rfc'], tipo_solicitud='CFDI')
+                    sol_recibidos = descarga.solicitar_descarga(token, self.attributes['rfc'], fecha_inicial,
+                                                                fecha_final,
+                                                                rfc_receptor=self.attributes['rfc'],
+                                                                tipo_solicitud='CFDI')
                     if sol_recibidos['cod_estatus'] == '5000':
-                        self.create_req_ext(extr_metar[0], sol_recibidos['id_solicitud'], fecha_inicial, fecha_final, 'R', datetime.now())
+                        self.create_req_ext(extr_metar[0], sol_recibidos['id_solicitud'], fecha_inicial, fecha_final,
+                                            'R', datetime.now())
 
-
-                extr_metae = self.create_req(self.attributes['rfc'], 'E', extraction_basis, Month, FiscalYear)
-                if type(extr_metae) is tuple:
-                    sol_emitidos = descarga.solicitar_descarga(token, self.attributes['rfc'], fecha_inicial, fecha_final,
-                                                               rfc_emisor=self.attributes['rfc'], tipo_solicitud='CFDI')
-                    if sol_emitidos['cod_estatus'] == '5000':
-                        self.create_req_ext(extr_metae[0], sol_emitidos['id_solicitud'], fecha_inicial, fecha_final, 'R', datetime.now())
+                # extr_metae = self.create_req(self.attributes['rfc'], 'E', extraction_basis, Month, FiscalYear)
+                # if type(extr_metae) is tuple:
+                #     sol_emitidos = descarga.solicitar_descarga(token, self.attributes['rfc'], fecha_inicial,
+                #                                                fecha_final,
+                #                                                rfc_emisor=self.attributes['rfc'], tipo_solicitud='CFDI')
+                #     if sol_emitidos['cod_estatus'] == '5000':
+                #         self.create_req_ext(extr_metae[0], sol_emitidos['id_solicitud'], fecha_inicial, fecha_final,
+                #                             'R', datetime.now())
 
     def download_pending_requests(self, path_base):
-        #Validate base processing path exists or not
+        # Validate base processing path exists or not
         path_complete = path_base + '/' + self.attributes['rfc']
         isExist = os.path.exists(path_complete)
         mode = 0o777
         if not isExist:
             os.mkdir(path_complete, mode)
-        #Validate zip processing path exists or not
+        # Validate zip processing path exists or not
         path_complete = path_complete + '/downloaded'
         isExist = os.path.exists(path_complete)
         if not isExist:
             os.mkdir(path_complete, mode)
-        #Validate pending extractions
+        # Validate pending extractions
         if 'extractions' in self.attributes:
-            print(self.attributes['keys'])
             for item_key in self.attributes['keys']:
                 match item_key[1]:
                     case 'PSW':
@@ -278,13 +332,12 @@ class FiscalEntity:
             path_complete = path_complete + '/'
             # Download the pending extractions
             for item in self.attributes['extractions']:
-                print(item)
                 if item[9] == 'R':
                     fiel = Fiel(cer_der, key_der, FIEL_PAS)
                     auth = Autenticacion(fiel)
                     token = auth.obtener_token()
                     verificacion = VerificaSolicitudDescarga(fiel)
-                    verificacion = verificacion.verificar_descarga(token, self.attributes['rfc'], item[6])
+                    verificacion = verificacion.verificar_descarga(token, rfc_solicitante=self.attributes['rfc'], id_solicitud=item[6])
                     estado_solicitud = int(verificacion['estado_solicitud'])
                     # 0, Token invalido.
                     # 1, Aceptada
@@ -293,12 +346,11 @@ class FiscalEntity:
                     # 4, Error
                     # 5, Rechazada
                     # 6, Vencida
-
                     if estado_solicitud <= 2:
                         print(item[6], 'status:', estado_solicitud)
                         continue
                     elif estado_solicitud >= 4:
-                        print(item[6],',ERROR:', estado_solicitud)
+                        print(item[6], ',ERROR:', estado_solicitud)
                         continue
                     else:
                         # Si el estatus es 3 se trata de descargar los paquetes
@@ -309,7 +361,80 @@ class FiscalEntity:
                             print(descarga)
                             print('PAQUETE: ', paquete, descarga['paquete_b64'])
                             if 'paquete_b64' in descarga and descarga['paquete_b64'] != None:
-                                with open(path_complete + '{}.zip'.format(paquete), 'wb') as fp:
-                                    fp.write(base64.b64decode(descarga['paquete_b64']))
-                                    break
-                    #TODO: set the status of the request
+                                try:
+                                    with open(path_complete + '{}.zip'.format(paquete), 'wb') as fp:
+                                        fp.write(base64.b64decode(descarga['paquete_b64']))
+                                except Exception as e:
+                                    self.log.error(e)
+                                else:
+                                    # Set D Downloaded status
+                                    self.update_status_extraction(item, 'D')
+
+    def unpack_requests(self, path_base):
+        # Validate base processing path exists or not
+        path_complete = path_base + '/' + self.attributes['rfc']
+        isExist = os.path.exists(path_complete)
+        mode = 0o777
+        if not isExist:
+            os.mkdir(path_complete, mode)
+        # Validate zip processing path exists or not
+        path_unzip = path_complete + '/unzipped'
+        isExist = os.path.exists(path_unzip)
+        if not isExist:
+            os.mkdir(path_unzip, mode)
+
+        path_downloaded = path_complete + '/downloaded'
+
+        # Validate pending unpacks
+        if 'extractions' in self.attributes:
+            path_complete = path_complete + '/'
+            # Download the pending extractions
+            for item in self.attributes['extractions']:
+                if item[9] == 'D':
+                    try:
+                        with zipfile.ZipFile(path_downloaded + '/' + item[6].upper() + '.zip', 'r') as zip_file:
+                            zip_file.extractall(path_unzip)
+                            list_files_created = zip_file.namelist()
+                            for item_zip in list_files_created:
+                                self.create_req_extr_uuid(item[0], item[6], item_zip.removesuffix('.xml'))
+                    except Exception as e:
+                        self.log.error(e)
+                    else:
+                        # Set U Downloaded status
+                        self.update_status_extraction(item, 'U')
+
+    def parse_xml_to_main(self, path_base):
+        # Validate base processing path exists or not
+        path_complete = path_base + '/' + self.attributes['rfc']
+        isExist = os.path.exists(path_complete)
+        mode = 0o777
+        if not isExist:
+            os.mkdir(path_complete, mode)
+        # Validate zip processing path exists or not
+        path_unzip = path_complete + '/main_meta'
+        isExist = os.path.exists(path_unzip)
+        if not isExist:
+            os.mkdir(path_unzip, mode)
+
+        path_unzipped = path_complete + '/unzipped'
+
+        # Validate pending unpacks
+        if 'extractions' in self.attributes:
+            path_complete = path_complete + '/'
+            # Download the pending extractions
+            for item in self.attributes['extractions']:
+                if item[9] == 'U':
+                    try:
+                        list_uuids_associated = self.get_all_uuid_by_idsolicitud(item[6])
+                        for item_uuid in list_uuids_associated:
+                            with open(path_unzipped + '/' + item_uuid[3] + '.xml') as xml_file:
+                                data_dict = xmltodict.parse(xml_file.read())
+                            result = self.digitaldocument.create_digital_document(self.attributes['rfc'], data_dict, item_uuid[3])
+                            if hasattr(result, 'inserted_id'):
+                                self.update_uuid(item_uuid[3], result.inserted_id)
+                    except Exception as e:
+                        self.log.error(e)
+                    else:
+                        pass
+                        #Set U Downloaded status
+                        self.update_status_extraction(item, 'U')

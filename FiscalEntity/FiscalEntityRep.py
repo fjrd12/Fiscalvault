@@ -1,4 +1,3 @@
-
 import logging
 from abc import ABC, abstractmethod
 
@@ -45,7 +44,6 @@ class MySQLRepositoryfiscalentity(IRepository):
                                                  user=user,
                                                  password=password)
         except Exception as e:
-            print(e)
             return None
         self._connection = connection
 
@@ -67,7 +65,7 @@ class MySQLRepositoryfiscalentity(IRepository):
         # query all records from database
         cursor = self._connection.cursor()
         cursor.execute(
-            """SELECT `meta`.`idFiscalDigitalExtraction` as id,
+             """SELECT `meta`.`idFiscalDigitalExtraction`,
                        `meta`.`RFC`,
                        `meta`.`Type`,
                        `meta`.`ExtrMode`,
@@ -93,6 +91,17 @@ class MySQLRepositoryfiscalentity(IRepository):
             result = cursor.fetchone()
         except Exception as e:
             logging.error('The record with the RFC {} does not exist'.format(rfc))
+        return result
+
+    def get_all_uuid_by_idsolicitud(self, idSolicitud):
+        # query record by id from database
+        cursor = self._connection.cursor()
+        try:
+            sentence = "SELECT * FROM fiscalvault.FiscalDigitalExtractionUUID WHERE IdSolicitud='{}'".format(idSolicitud)
+            cursor.execute(sentence)
+            result = cursor.fetchall()
+        except Exception as e:
+            logging.error('The record with the idSolicitud {} does not exist'.format(idSolicitud))
         return result
 
     def create(self, FiscalEntity,log):
@@ -164,6 +173,38 @@ class MySQLRepositoryfiscalentity(IRepository):
             return 0
         return insert_tuple
 
+    def create_req_extr_uuid(self, id, rfc, idsol, UUID, log):
+        # insert record into database
+        cursor = self._connection.cursor()
+        record = self.get_by_id(rfc, log)
+        insert_tuple = (id, rfc, idsol, UUID)
+        if record:
+            sentence = "INSERT INTO fiscalvault.FiscalDigitalExtractionUUID(idFiscalDigitalExtraction, RFC, IdSolicitud, UUID) VALUES (%s,%s,%s,%s)"
+            try:
+                record = cursor.execute(sentence, insert_tuple)
+                self._connection.commit()
+            except Exception as e:
+                log.error(e)
+        else:
+            log.error('The record {} does not exists'.rfc)
+            return 0
+        return insert_tuple
+
+    def update_status_extraction(self, idextr, rfc, idsol, status, log):
+        # update record in database
+        update_extraction = (status, idextr, rfc, idsol)
+        cursor = self._connection.cursor()
+        sentence = """UPDATE fiscalvault.FiscalDigitalExtraction SET Status='{}' 
+                   where idFiscalDigitalExtraction='{}' and RFC='{}' and IdSolicitud='{}'""".format(update_extraction[0], update_extraction[1], update_extraction[2], update_extraction[3])
+        try:
+            cursor.execute(sentence)
+            self._connection.commit()
+        except Exception as e:
+            log.error(e)
+        if cursor.rowcount > 0:
+            log.debug('Extraction request updated {} {} {} {} updated'. format(idextr, rfc, idsol, status))
+        return cursor.rowcount > 0
+
     def update_fiscal_key(self, rfc, keytype, passw, raw, scndkey, log):
         # update record in database
         update_blob_tuple = (raw, passw, scndkey, rfc, keytype)
@@ -189,6 +230,19 @@ class MySQLRepositoryfiscalentity(IRepository):
             log.error(e)
         if cursor.rowcount > 0:
             log.debug('Fiscal entity RFC {} updated'. format(FiscalEntity['RFC']))
+        return cursor.rowcount > 0
+
+    def update_uuid(self, record_to_update,log):
+        # update record in database
+        cursor = self._connection.cursor()
+        sentence = "UPDATE fiscalvault.FiscalDigitalExtractionUUID SET DocRelated='{}' where UUID = '{}'".format(record_to_update['docrelated'], record_to_update['uuid'])
+        try:
+            cursor.execute(sentence)
+            self._connection.commit()
+        except Exception as e:
+            log.error(e)
+        if cursor.rowcount > 0:
+            log.debug('UUID,Document {} {} updated'. format(record_to_update['uuid'], record_to_update['docrelated']))
         return cursor.rowcount > 0
 
     def delete(self, rfc,log):
